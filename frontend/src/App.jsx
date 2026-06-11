@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard';
 import Chatbot from './pages/Chatbot';
 import Quiz from './pages/Quiz';
 import { useAuth } from './context/AuthContext';
+import Quizzes from './pages/Quizzes';
 
 // Protect routes that need login
 const ProtectedRoute = ({ children }) => {
@@ -56,7 +57,11 @@ function App() {
         <Route path="/quiz/:id" element={
           <ProtectedRoute><Quiz /></ProtectedRoute>
         } />
+        <Route path="/quizzes" element={
+  <ProtectedRoute><Quizzes /></ProtectedRoute>
+} />
       </Routes>
+      
     </div>
   );
 }

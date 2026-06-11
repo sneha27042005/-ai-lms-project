@@ -48,4 +48,6 @@ export const getChatSessions = () => api.get('/chatbot/sessions/');
 export const getDashboard = () => api.get('/progress/dashboard/');
 export const markLessonComplete = (lessonId) => api.post(`/progress/lessons/${lessonId}/complete/`);
 
+
+
 export default api;
