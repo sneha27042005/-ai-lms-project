@@ -4,437 +4,445 @@ import { sendMessage } from '../services/api';
 
 const Chatbot = () => {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState([
-    { role: 'assistant', content: "Hello! I'm your AI Tutor. How can I help you learn today?" }
-  ]);
+  const [conversations, setConversations] = useState(() => {
+    const stored = localStorage.getItem('conversations');
+    return stored ? JSON.parse(stored) : [];
+  });
+  const [activeId, setActiveId] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [savedChats, setSavedChats] = useState([]);
-  const [currentChatName, setCurrentChatName] = useState('New Chat');
-  const [editingName, setEditingName] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [notification, setNotification] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editingName, setEditingName] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef(null);
-  const nameInputRef = useRef(null);
+  const editInputRef = useRef(null);
+  const textareaRef = useRef(null);
 
-  // ─── Load saved chats from localStorage on mount ───────────────────────────
+  // ── Persist conversations ──────────────────────────────────────────────────
   useEffect(() => {
-    const stored = localStorage.getItem('chatHistory');
-    if (stored) {
-      setSavedChats(JSON.parse(stored));
-    }
-  }, []);
+    localStorage.setItem('conversations', JSON.stringify(conversations));
+  }, [conversations]);
 
-  // ─── Auto-scroll to bottom ─────────────────────────────────────────────────
+  // ── Scroll to bottom ───────────────────────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, loading]);
 
-  // ─── Focus name input when editing ────────────────────────────────────────
+  // ── Focus edit input ───────────────────────────────────────────────────────
   useEffect(() => {
-    if (editingName) nameInputRef.current?.focus();
-  }, [editingName]);
+    if (editingId) editInputRef.current?.focus();
+  }, [editingId]);
 
-  // ─── Show temporary notification ──────────────────────────────────────────
-  const showNotification = (msg) => {
-    setNotification(msg);
-    setTimeout(() => setNotification(''), 3000);
-  };
-
-  // ─── Save current chat to localStorage ────────────────────────────────────
-  const saveCurrentChat = () => {
-    if (messages.length <= 1) {
-      showNotification('⚠️ No conversation to save yet!');
-      return;
+  // ── Auto-resize textarea ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height =
+        Math.min(textareaRef.current.scrollHeight, 200) + 'px';
     }
+  }, [input]);
 
-    const newChat = {
-      id: sessionId || Date.now().toString(),
-      name: currentChatName,
-      messages,
-      savedAt: new Date().toISOString(),
-      messageCount: messages.length,
-    };
-
-    const updated = savedChats.filter((c) => c.id !== newChat.id);
-    const newList = [newChat, ...updated];
-
-    setSavedChats(newList);
-    localStorage.setItem('chatHistory', JSON.stringify(newList));
-    showNotification('✅ Chat saved successfully!');
-  };
-
-  // ─── Load a saved chat ─────────────────────────────────────────────────────
-  const loadChat = (chat) => {
-    setMessages(chat.messages);
-    setCurrentChatName(chat.name);
-    setSessionId(chat.id);
-    setShowHistory(false);
-    showNotification(`📂 Loaded: "${chat.name}"`);
-  };
-
-  // ─── Delete a saved chat ───────────────────────────────────────────────────
-  const deleteChat = (chatId, e) => {
-    e.stopPropagation();
-    const updated = savedChats.filter((c) => c.id !== chatId);
-    setSavedChats(updated);
-    localStorage.setItem('chatHistory', JSON.stringify(updated));
-    showNotification('🗑️ Chat deleted!');
-  };
-
-  // ─── Start a brand new chat ────────────────────────────────────────────────
-  const startNewChat = () => {
-    setMessages([
-      { role: 'assistant', content: "Hello! I'm your AI Tutor. How can I help you learn today?" },
-    ]);
-    setInput('');
-    setSessionId(null);
-    setCurrentChatName('New Chat');
-    setShowHistory(false);
-    showNotification('🆕 New chat started!');
-  };
-
-  // ─── Clear all history ─────────────────────────────────────────────────────
-  const clearAllHistory = () => {
-    if (window.confirm('Are you sure you want to delete ALL saved chats?')) {
-      setSavedChats([]);
-      localStorage.removeItem('chatHistory');
-      showNotification('🗑️ All history cleared!');
+  // ── Load active conversation messages ──────────────────────────────────────
+  useEffect(() => {
+    if (activeId) {
+      const conv = conversations.find((c) => c.id === activeId);
+      if (conv) setMessages(conv.messages);
+    } else {
+      setMessages([]);
     }
-  };
+  }, [activeId]);
 
-  // ─── Export chat as .txt file ──────────────────────────────────────────────
-  const exportChat = (chat, e) => {
-    e.stopPropagation();
-    const content = chat.messages
-      .map((m) => `[${m.role.toUpperCase()}]: ${m.content}`)
-      .join('\n\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${chat.name}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showNotification('📥 Chat exported!');
-  };
-
-  // ─── Export current chat ───────────────────────────────────────────────────
-  const exportCurrentChat = () => {
-    if (messages.length <= 1) {
-      showNotification('⚠️ No conversation to export yet!');
-      return;
-    }
-    const content = messages
-      .map((m) => `[${m.role.toUpperCase()}]: ${m.content}`)
-      .join('\n\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentChatName}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showNotification('📥 Chat exported!');
-  };
-
-  // ─── Filter chats by search ────────────────────────────────────────────────
-  const filteredChats = savedChats.filter(
-    (c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.messages.some((m) =>
-        m.content.toLowerCase().includes(searchQuery.toLowerCase())
+  // ── Save messages to active conversation ───────────────────────────────────
+  const saveMessages = (id, newMessages) => {
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === id ? { ...c, messages: newMessages, updatedAt: Date.now() } : c
       )
-  );
-
-  // ─── Format date ───────────────────────────────────────────────────────────
-  const formatDate = (iso) => {
-    const date = new Date(iso);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    );
   };
 
-  // ─── Send message ──────────────────────────────────────────────────────────
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-
-    const userMessage = input;
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
+  // ── Create new conversation ────────────────────────────────────────────────
+  const newConversation = () => {
+    setActiveId(null);
+    setMessages([]);
+    setSessionId(null);
     setInput('');
-    setLoading(true);
+  };
 
-    // Auto-name the chat after first user message
-    if (messages.length === 1 && currentChatName === 'New Chat') {
-      setCurrentChatName(
-        userMessage.length > 30 ? userMessage.slice(0, 30) + '...' : userMessage
+  // ── Delete conversation ────────────────────────────────────────────────────
+  const deleteConversation = (id, e) => {
+    e.stopPropagation();
+    const updated = conversations.filter((c) => c.id !== id);
+    setConversations(updated);
+    if (activeId === id) {
+      setActiveId(null);
+      setMessages([]);
+    }
+  };
+
+  // ── Rename conversation ────────────────────────────────────────────────────
+  const startEditing = (id, name, e) => {
+    e.stopPropagation();
+    setEditingId(id);
+    setEditingName(name);
+  };
+
+  const saveEditing = () => {
+    if (editingName.trim()) {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === editingId ? { ...c, name: editingName.trim() } : c
+        )
       );
     }
+    setEditingId(null);
+    setEditingName('');
+  };
+
+  // ── Group conversations by date ────────────────────────────────────────────
+  const groupConversations = () => {
+    const now = Date.now();
+    const day = 86400000;
+    const groups = { Today: [], Yesterday: [], 'Past 7 Days': [], Older: [] };
+
+    conversations.forEach((c) => {
+      const diff = now - c.updatedAt;
+      if (diff < day) groups['Today'].push(c);
+      else if (diff < 2 * day) groups['Yesterday'].push(c);
+      else if (diff < 7 * day) groups['Past 7 Days'].push(c);
+      else groups['Older'].push(c);
+    });
+
+    return groups;
+  };
+
+  // ── Send message ───────────────────────────────────────────────────────────
+  const handleSend = async () => {
+    if (!input.trim() || loading) return;
+
+    const userText = input.trim();
+    setInput('');
+
+    let currentId = activeId;
+    let currentMessages = [...messages];
+    let isNew = false;
+
+    // Create new conversation if none active
+    if (!currentId) {
+      const id = Date.now().toString();
+      const name =
+        userText.length > 35 ? userText.slice(0, 35) + '...' : userText;
+      const newConv = {
+        id,
+        name,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      setConversations((prev) => [newConv, ...prev]);
+      setActiveId(id);
+      currentId = id;
+      currentMessages = [];
+      isNew = true;
+    }
+
+    const updated = [...currentMessages, { role: 'user', content: userText }];
+    setMessages(updated);
+    if (!isNew) saveMessages(currentId, updated);
+    setLoading(true);
 
     try {
-      const res = await sendMessage(userMessage, sessionId);
+      const res = await sendMessage(userText, sessionId);
       setSessionId(res.data.session_id);
-      setMessages((prev) => [
-        ...prev,
+      const withReply = [
+        ...updated,
         { role: 'assistant', content: res.data.message },
-      ]);
+      ];
+      setMessages(withReply);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === currentId
+            ? { ...c, messages: withReply, updatedAt: Date.now() }
+            : c
+        )
+      );
     } catch (error) {
       const errorMsg =
         error.response?.data?.error ||
-        'Sorry, I had trouble responding. Please try again.';
-      setMessages((prev) => [
-        ...prev,
+        'Something went wrong. Please try again.';
+      const withError = [
+        ...updated,
         { role: 'assistant', content: errorMsg },
-      ]);
+      ];
+      setMessages(withError);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === currentId
+            ? { ...c, messages: withError, updatedAt: Date.now() }
+            : c
+        )
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const grouped = groupConversations();
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      {/* ── Notification Toast ──────────────────────────────────────────────── */}
-      {notification && (
-        <div className="fixed top-4 right-4 z-50 bg-gray-800 text-white px-5 py-3 rounded-xl shadow-lg animate-fade-in">
-          {notification}
-        </div>
-      )}
+    <div className="flex h-screen bg-white overflow-hidden">
 
-      <div className="container mx-auto px-6 max-w-5xl">
-        <div className="flex gap-4">
-
-          {/* ── Sidebar: Chat History ────────────────────────────────────────── */}
-          {showHistory && (
-            <div className="w-72 bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-              {/* Sidebar Header */}
-              <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4">
-                <h2 className="font-bold text-lg">📚 Chat History</h2>
-                <p className="text-blue-100 text-xs">{savedChats.length} saved chats</p>
-              </div>
-
-              {/* Search */}
-              <div className="p-3 border-b">
-                <input
-                  type="text"
-                  placeholder="🔍 Search chats..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+      {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
+      <div
+        className={`${
+          sidebarOpen ? 'w-64' : 'w-0'
+        } transition-all duration-300 bg-[#171717] flex flex-col overflow-hidden shrink-0`}
+      >
+        {/* Top */}
+        <div className="p-3 flex flex-col gap-1">
+          {/* New Chat */}
+          <button
+            onClick={newConversation}
+            className="flex items-center justify-between w-full px-3 py-2 rounded-lg hover:bg-white/10 text-white text-sm transition group"
+          >
+            <span className="flex items-center gap-2">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
                 />
-              </div>
+              </svg>
+              AI Tutor
+            </span>
+            <svg className="w-4 h-4 opacity-60 group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </div>
 
-              {/* New Chat Button */}
-              <div className="p-3 border-b">
-                <button
-                  onClick={startNewChat}
-                  className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition"
-                >
-                  + New Chat
-                </button>
-              </div>
-
-              {/* Chat List */}
-              <div className="flex-1 overflow-y-auto">
-                {filteredChats.length === 0 ? (
-                  <div className="p-6 text-center text-gray-400">
-                    <div className="text-4xl mb-2">💬</div>
-                    <p className="text-sm">
-                      {searchQuery ? 'No chats found' : 'No saved chats yet'}
-                    </p>
-                  </div>
-                ) : (
-                  filteredChats.map((chat) => (
+        {/* Conversation List */}
+        <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-4 scrollbar-thin scrollbar-thumb-white/10">
+          {conversations.length === 0 ? (
+            <p className="text-center text-white/30 text-xs mt-8 px-4">
+              No conversations yet
+            </p>
+          ) : (
+            Object.entries(grouped).map(([label, items]) =>
+              items.length > 0 ? (
+                <div key={label}>
+                  <p className="text-white/40 text-xs font-medium px-3 py-2 uppercase tracking-wider">
+                    {label}
+                  </p>
+                  {items.map((conv) => (
                     <div
-                      key={chat.id}
-                      onClick={() => loadChat(chat)}
-                      className="p-3 border-b hover:bg-blue-50 cursor-pointer transition group"
+                      key={conv.id}
+                      onClick={() => {
+                        setActiveId(conv.id);
+                        setSessionId(null);
+                      }}
+                      className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition mb-0.5 ${
+                        activeId === conv.id
+                          ? 'bg-white/15 text-white'
+                          : 'text-white/70 hover:bg-white/10 hover:text-white'
+                      }`}
                     >
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-sm text-gray-800 truncate">
-                            {chat.name}
-                          </p>
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            🕒 {formatDate(chat.savedAt)}
-                          </p>
-                          <p className="text-xs text-gray-400">
-                            💬 {chat.messageCount} messages
-                          </p>
-                          {/* Last message preview */}
-                          <p className="text-xs text-gray-500 mt-1 truncate">
-                            {chat.messages[chat.messages.length - 1]?.content}
-                          </p>
-                        </div>
-                        {/* Action Buttons */}
-                        <div className="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition">
-                          <button
-                            onClick={(e) => exportChat(chat, e)}
-                            title="Export"
-                            className="text-blue-500 hover:text-blue-700 text-xs p-1"
-                          >
-                            📥
-                          </button>
-                          <button
-                            onClick={(e) => deleteChat(chat.id, e)}
-                            title="Delete"
-                            className="text-red-400 hover:text-red-600 text-xs p-1"
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      </div>
+                      {editingId === conv.id ? (
+                        <input
+                          ref={editInputRef}
+                          value={editingName}
+                          onChange={(e) => setEditingName(e.target.value)}
+                          onBlur={saveEditing}
+                          onKeyDown={(e) => e.key === 'Enter' && saveEditing()}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 bg-white/10 text-white text-sm px-2 py-0.5 rounded outline-none border border-white/30"
+                        />
+                      ) : (
+                        <>
+                          <span className="flex-1 text-sm truncate">{conv.name}</span>
+                          <div className="hidden group-hover:flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={(e) => startEditing(conv.id, conv.name, e)}
+                              className="p-1 rounded hover:bg-white/10 text-white/60 hover:text-white transition"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                  d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={(e) => deleteConversation(conv.id, e)}
+                              className="p-1 rounded hover:bg-white/10 text-white/60 hover:text-red-400 transition"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
-                  ))
-                )}
-              </div>
-
-              {/* Clear All */}
-              {savedChats.length > 0 && (
-                <div className="p-3 border-t">
-                  <button
-                    onClick={clearAllHistory}
-                    className="w-full text-red-500 hover:text-red-700 text-xs py-2 border border-red-200 rounded-lg hover:bg-red-50 transition"
-                  >
-                    🗑️ Clear All History
-                  </button>
+                  ))}
                 </div>
-              )}
-            </div>
+              ) : null
+            )
           )}
+        </div>
 
-          {/* ── Main Chat Window ──────────────────────────────────────────────── */}
-          <div className="flex-1 bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">🤖</span>
-                  <div>
-                    {/* Editable Chat Name */}
-                    {editingName ? (
-                      <input
-                        ref={nameInputRef}
-                        type="text"
-                        value={currentChatName}
-                        onChange={(e) => setCurrentChatName(e.target.value)}
-                        onBlur={() => setEditingName(false)}
-                        onKeyDown={(e) => e.key === 'Enter' && setEditingName(false)}
-                        className="bg-white/20 text-white font-bold text-lg px-2 py-0.5 rounded outline-none border border-white/50 w-48"
-                      />
-                    ) : (
-                      <h1
-                        onClick={() => setEditingName(true)}
-                        title="Click to rename"
-                        className="text-lg font-bold cursor-pointer hover:bg-white/10 px-1 rounded flex items-center gap-1"
-                      >
-                        {currentChatName} <span className="text-sm">✏️</span>
-                      </h1>
-                    )}
-                    <p className="text-blue-100 text-xs">Powered by Gemini AI</p>
-                  </div>
-                </div>
+        {/* Back to Dashboard */}
+        <div className="p-3 border-t border-white/10">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="flex items-center gap-2 w-full px-3 py-2 rounded-lg hover:bg-white/10 text-white/60 hover:text-white text-sm transition"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
 
-                {/* Action Buttons */}
-                <div className="flex items-center gap-2">
+      {/* ── Main Area ─────────────────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-w-0">
+
+        {/* Top Bar */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white shrink-0">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <span className="font-semibold text-gray-800 text-sm">
+            {activeId
+              ? conversations.find((c) => c.id === activeId)?.name || 'Chat'
+              : 'AI Tutor'}
+          </span>
+        </div>
+
+        {/* Messages or Welcome Screen */}
+        <div className="flex-1 overflow-y-auto">
+          {messages.length === 0 ? (
+            // ── Welcome Screen ───────────────────────────────────────────────
+            <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
+              <div className="text-center">
+                <div className="text-5xl mb-4">🤖</div>
+                <h1 className="text-2xl font-bold text-gray-800 mb-1">
+                  How can I help you today?
+                </h1>
+                <p className="text-gray-400 text-sm">
+                  Powered by Gemini AI • Ask me anything
+                </p>
+              </div>
+              {/* Suggestions */}
+              <div className="grid grid-cols-2 gap-3 max-w-lg w-full">
+                {[
+                  'Explain photosynthesis simply',
+                  'Help me solve quadratic equations',
+                  'Summarize World War II causes',
+                  'What is machine learning?',
+                ].map((s) => (
                   <button
-                    onClick={() => setShowHistory(!showHistory)}
-                    className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition flex items-center gap-1"
+                    key={s}
+                    onClick={() => setInput(s)}
+                    className="text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-sm text-gray-700 transition"
                   >
-                    📚 {showHistory ? 'Hide' : 'History'}
-                    {savedChats.length > 0 && (
-                      <span className="bg-white text-purple-600 text-xs font-bold px-1.5 py-0.5 rounded-full">
-                        {savedChats.length}
-                      </span>
-                    )}
+                    {s}
                   </button>
-                  <button
-                    onClick={saveCurrentChat}
-                    className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition"
-                  >
-                    💾 Save
-                  </button>
-                  <button
-                    onClick={exportCurrentChat}
-                    className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition"
-                  >
-                    📥 Export
-                  </button>
-                  <button
-                    onClick={startNewChat}
-                    className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition"
-                  >
-                    🆕
-                  </button>
-                  <button
-                    onClick={() => navigate('/dashboard')}
-                    className="bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition"
-                  >
-                    ← Back
-                  </button>
-                </div>
+                ))}
               </div>
             </div>
-
-            {/* Messages */}
-            <div className="flex-1 h-[500px] overflow-y-auto p-6 space-y-4 bg-gray-50">
+          ) : (
+            // ── Message List ─────────────────────────────────────────────────
+            <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-6">
               {messages.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
+                <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {msg.role === 'assistant' && (
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm shrink-0 mt-0.5">
+                      🤖
+                    </div>
+                  )}
                   <div
-                    className={`max-w-[75%] p-4 rounded-2xl ${
+                    className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
                       msg.role === 'user'
-                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
-                        : 'bg-white text-gray-800 shadow'
+                        ? 'bg-gray-100 text-gray-800 rounded-br-sm'
+                        : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm'
                     }`}
                   >
-                    <div className="text-sm font-semibold mb-1">
-                      {msg.role === 'user' ? '👤 You' : '🤖 AI Tutor'}
-                    </div>
-                    <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                    <div className="whitespace-pre-wrap">{msg.content}</div>
                   </div>
+                  {msg.role === 'user' && (
+                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-sm shrink-0 mt-0.5">
+                      👤
+                    </div>
+                  )}
                 </div>
               ))}
 
+              {/* Typing Indicator */}
               {loading && (
-                <div className="flex justify-start">
-                  <div className="bg-white p-4 rounded-2xl shadow">
-                    <div className="flex gap-2">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                <div className="flex gap-3 justify-start">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm shrink-0">
+                    🤖
+                  </div>
+                  <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-sm shadow-sm">
+                    <div className="flex gap-1.5 items-center h-4">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                     </div>
                   </div>
                 </div>
               )}
               <div ref={messagesEndRef} />
             </div>
+          )}
+        </div>
 
-            {/* Input */}
-            <form onSubmit={handleSend} className="p-4 border-t bg-white flex gap-2">
-              <input
-                type="text"
+        {/* Input Area */}
+        <div className="px-4 py-4 bg-white shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-end gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-3 shadow-sm focus-within:border-gray-400 transition">
+              <textarea
+                ref={textareaRef}
+                rows={1}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask me anything about your courses..."
+                onKeyDown={handleKeyDown}
+                placeholder="Message AI Tutor..."
                 disabled={loading}
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm"
+                className="flex-1 resize-none bg-transparent text-sm text-gray-800 placeholder-gray-400 outline-none max-h-48"
               />
               <button
-                type="submit"
+                onClick={handleSend}
                 disabled={loading || !input.trim()}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 disabled:opacity-50 transition"
+                className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition ${
+                  input.trim() && !loading
+                    ? 'bg-gray-800 hover:bg-gray-700 text-white'
+                    : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                }`}
               >
-                Send 🚀
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
               </button>
-            </form>
+            </div>
+            <p className="text-center text-xs text-gray-400 mt-2">
+              Press Enter to send · Shift+Enter for new line
+            </p>
           </div>
         </div>
       </div>
